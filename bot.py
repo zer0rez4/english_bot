@@ -2,6 +2,7 @@ import asyncio
 import sys
 import logging
 import os
+import random
 
 from dotenv import load_dotenv
 from translate import Translator
@@ -13,6 +14,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 load_dotenv()
 bot = Bot(os.getenv('TOKEN'))
@@ -28,6 +30,7 @@ main_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Уч
 stat_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Личная', callback_data='own_stat')], [InlineKeyboardButton(text='Топы', callback_data='users_top')]])
 #top_kb = InlineKeyboardMarkup() #прописать топы (по добавленным словам (кто больше добавил), и по правильным ответам и процентом ответов)
 
+learn_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Новое слово', callback_data='learn')], [InlineKeyboardButton(text='Назад', callback_data='back')]])
 back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Назад', callback_data='back')]])
 
 answer_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Добавить', callback_data='adding_word')], [InlineKeyboardButton(text='Ввести свой перевод', callback_data='another_translate')]])
@@ -36,20 +39,46 @@ answer_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Д
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    db = DB('main')
+    db.create_new_user(message.from_user.id)
     await message.answer('Добро пожаловать в ELE - лучший бот для изучение английского',  reply_markup=main_kb)
 @dp.callback_query(F.data == 'back')
 async def main_menu(call: CallbackQuery):
     await call.message.edit_text('Учитесь с удовольствием', reply_markup=main_kb)
 
 
-#учить (основной функционал), прописать логику (выдавание слов)
+
+#учить (основной функционал)
 @dp.callback_query(F.data == 'learn')
 async def learn(call: CallbackQuery):
-    await call.message.edit_text()
+    db = DB('main')
+    word, correct_translation, wrong_translations = db.get_random_word_and_translations()
+    keyboard = InlineKeyboardBuilder()
+    options = [correct_translation] + wrong_translations
+    random.shuffle(options)
+    for option in options:
+        callback_data = f"answer:{option}:{correct_translation}"
+        keyboard.button(text=option, callback_data=callback_data)
+
+    await call.message.edit_text(f"Как переводится слово '{word}'?", reply_markup=keyboard.as_markup())
+
+@dp.callback_query(F.data.startswith('answer:'))
+async def check_answer(call: CallbackQuery):
+    db = DB('main')
+    _, user_answer, correct_answer = call.data.split(':')
+    #добавить базы данных со стастикой
+    if user_answer == correct_answer:
+        response_text = "Правильно! Молодец!"
+        db.correct_answer(call.from_user.id)
+    else:
+        response_text = f"Неправильно. Правильный ответ: {correct_answer}"
+        db.incorrect_answer(call.from_user.id)
+    
+    await call.message.edit_text(response_text, reply_markup=learn_kb)
 
 
 
-
+#добавление новых слов в общую базу данных
 @dp.callback_query(F.data == 'add_word')
 async def check_new_word(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text('Напишите слово для добавления', reply_markup=back_kb)
@@ -61,7 +90,6 @@ async def add_word_func(message: Message, state: FSMContext):
 
     db = DB('main')
     result = db.check_word(word=message.text.lower())[0]
-    print(result)
     if result:
         await message.answer('Данное слово уже существует в базе', reply_markup=back_kb)
     else:
@@ -95,6 +123,7 @@ async def adding_word_original(call: CallbackQuery, state: FSMContext):
     db = DB('main')
     db.add_word(data['russian_word'], result, call.from_user.id)
     await call.message.edit_text(f"Слово {result} успешно добавлено", reply_markup=back_kb)
+
 
 
 
